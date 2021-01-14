@@ -14,6 +14,7 @@ export interface Activity {
     isHost: boolean;
     host?: Profile;
     attendees: Profile[]
+    comments: Comment[]
   }
 
   export class Activity implements Activity {
@@ -42,4 +43,13 @@ export interface Activity {
         this.city = activity.city;
       }
     }
+  }
+
+  export interface Comment {
+    id: string;
+    createdAt: Date;
+    body: string;
+    username: string;
+    displayName: string;
+    image: string;
   }

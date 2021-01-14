@@ -1,9 +1,11 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import agent from "../api/agent";
-import { Activity, ActivityFormValues } from "../models/activity";
+import { Activity, ActivityFormValues, Comment } from "../models/activity";
 import {format} from 'date-fns';
 import { store } from "./store";
 import { Profile } from "../models/profile";
+import { HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { toast } from "react-toastify";
 
 export default class ActivityStore {
     activityRegistry = new Map<string, Activity>();
@@ -11,9 +13,55 @@ export default class ActivityStore {
     editMode = false;
     loading = false;
     loadingInitial = false;
+    hubConnection: HubConnection | null = null;
 
     constructor() {
         makeAutoObservable(this)
+    }
+
+    createHubConnection = (activityId: string) => {
+        this.hubConnection = new HubConnectionBuilder()
+            .withUrl('http://localhost:5000/chat', {
+                accessTokenFactory: () => store.userStore.user?.token!
+            })
+            .withAutomaticReconnect()
+            .configureLogging(LogLevel.Information)
+            .build();
+
+        this.hubConnection.start()
+            .then(() => {
+                if (this.hubConnection?.state === 'Connected') {
+                    this.hubConnection.invoke('AddToGroup', activityId)
+                }
+            })
+            .catch(error => console.log('Error establishing connection', error));
+
+        this.hubConnection.on('UpdateGroup', message => toast.info(message));
+
+        this.hubConnection.on('ReceiveComment', (comment: Comment) => {
+            comment.createdAt = new Date(comment.createdAt);
+            runInAction(() => {
+                this.selectedActivity?.comments?.push(comment);
+            })
+        })
+    }
+
+    stopHubConnection = (activityId: string) => {
+        this.hubConnection?.invoke('RemoveFromGroup', activityId)
+            .then(() => {
+                this.hubConnection?.stop()
+            })
+            .catch(error => console.log(error));
+    }
+
+    addComment = async (values: any) => {
+        values.activityId = this.selectedActivity?.id;
+        try {
+            await this.hubConnection?.invoke('SendComment', values);
+        } catch (error) {
+            console.log(error);
+            toast.error(error);
+        }
     }
 
     get activitiesByDate() {
@@ -77,6 +125,12 @@ export default class ActivityStore {
             activity.host = activity.attendees?.find(x => x.username === activity.hostUsername);
         }
         activity.date = new Date(activity.date!);
+        if (activity.comments && activity.comments.length > 0) {
+            activity.comments.forEach(comment => {
+                comment.createdAt = new Date(comment.createdAt);
+            })
+            activity.comments.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        }
         this.activityRegistry.set(activity.id, activity);
     }
 
